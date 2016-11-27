@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {margin: 0; overflow:hidden;}
+        #wave-select {position: absolute; left:10px; top:10px;}
+        svg {border: black; cursor: none; background: #FCF4B5}
+        circle {fill: black; fill-opacity: .75;}
+        #wave {fill: none; stroke: #F1896F; stroke-width:2;}
+        #ticker {fill: green; stroke: #222; stroke-width:.5; fill-opacity: .2;}
+    </style>
+    <script src="//d3js.org/d3.v4.min.js"></script>
+</head>
+<body>
+    <div id="wave-select">
+        Waveform: 
+        <select id="waveType" onchange="oscillator.type = this.value">
+            <option value="sine">Sine</option>
+            <option value="square">Square</option>
+            <option value="sawtooth">Sawtooth</option>
+            <option value="triangle">Triangle</option>
+        </select>
+    </div>
+</body>
+<script>
+    var audioCtx = new (window.AudioContext || window.webkitAudioContext)(),
+        oscillator = audioCtx.createOscillator(),
+        gainNode = audioCtx.createGain(),
+        analyser = audioCtx.createAnalyser();
+
+    oscillator.connect(audioCtx.destination);
+    gainNode.connect(audioCtx.destination);
+    oscillator.connect(gainNode);
+    oscillator.connect(analyser);
+
+    var bufferLength = analyser.frequencyBinCount;
+    var dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+    gainNode.gain.value = -1
+    oscillator.frequency.value = 0
+    oscillator.start(0);    
+
+    var width = innerWidth > 960 ? innerWidth : 960,
+        height = innerHeight > 500 ? innerHeight : 500;
+
+    var scaleY = d3.scalePow().exponent(-.25).domain([height,10]).range([100,5000]),
+        scaleX = d3.scaleLinear().domain([0,bufferLength]).range([0,width]),
+        gainScale = d3.scaleLinear().domain([0,width]).range([-1,0]),
+        octaves = [110,220,440,880,1760,3520]
+
+    var tickerHist = [0]
+
+    var line = d3.line()
+        .x(function(d, i) {return scaleX(i)})
+        .y(function(d) {return (d-122.5) * (gainNode.gain.value+1)})
+
+    var tickerLine = d3.area()
+        .x(function(d, i) {return (i - tickerHist.length)*2})
+        .y0(height)
+        .y1(function(d) {return scaleY.invert(d)})
+
+    var svg = d3.select("body").append("svg")
+        .attr("width", width)
+        .attr("height", height)
+
+    svg.on("mouseover", oscStart)
+        .on("mouseout", oscStop)
+        .on("mousemove", oscChange)
+        .on("touchstart", oscStart)
+        .on("touchend", oscStop)
+        .on("touchmove", oscChange)
+
+
+    function oscStart() {
+        if (oscillator.noteOn) oscillator.noteOn(0);
+        circle.style("visibility", "visible")
+    }
+    function oscStop() {
+        circle.style("visibility", "hidden")
+
+        oscillator.frequency.value = 0;
+        gainNode.gain.value = -1
+        updateWave(100)
+    }
+    function oscChange() {
+        circle.attr("cx", d3.event.pageX).attr("cy", d3.event.pageY)
+        ticker.attr("transform", `translate(${d3.event.pageX},0)`)
+
+        oscillator.frequency.value = scaleY(d3.event.pageY);
+        gainNode.gain.value = gainScale(d3.event.pageX);
+        updateWave(1);      
+    }
+
+    document.addEventListener("touchmove", function(e) {e.preventDefault();}, false);
+
+    var octavesLines = svg.append("g")
+        .attr("class", "octaves").selectAll("path")
+        .data(octaves)
+      .enter().append("path")
+        .style("stroke", "#9CD2B8")
+        .attr("stroke-dasharray",[5,5])
+        .attr("d", function(d) {return `M0 ${scaleY.invert(d)} H ${width+11}`})
+
+    var circle = svg.append("circle")
+        .attr("r", 10)
+        .style("visibility", "hidden")
+
+    var freq = svg.append("text")
+        .attr("x", 10)
+        .attr("y", height - 10)
+        .text('Frequency: -')
+
+    var waveShape = svg.append("g").append("path")
+        .datum(dataArray)
+        .attr("id", "wave")
+        .attr("transform", `translate(0,${height/2})`)
+
+    var ticker = svg.append("g").append("path")
+        .attr("transform", `translate(${width+10},0)`)
+        .attr("id", "ticker")
+        .datum(tickerHist)      
+
+    updateWave()
+
+    d3.timer(function() {
+        updateTicker(oscillator.frequency.value);
+    }, 100)
+
+    function updateTicker(fVal) {
+        tickerHist.push(fVal)
+        if (tickerHist.length > width*1.1) {
+            tickerHist.shift()
+        }
+        ticker.attr("d", tickerLine)
+    }
+
+    function updateWave(duration) {
+        analyser.getByteTimeDomainData(dataArray);
+
+        waveShape.transition().duration(duration).ease(d3.easeLinear).attr("d",line)    
+        freq.text(`Frequency: ${d3.format(',.0f')(oscillator.frequency.value)} Hz`);    
+    }
+</script>
+</html>
