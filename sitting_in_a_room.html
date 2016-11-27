@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        button {margin-right: 10px}
+        input {margin-left: 10px}
+        path {fill: none; stroke: black; stroke-width: .5;}
+        .position {fill: red; fill-opacity: .5; visibility: hidden;}
+        .zoom {fill: none; pointer-events: all;}
+    </style>
+    <script src="//d3js.org/d3.v4.min.js"></script>
+</head>
+<body>
+    <div>
+        <button id="apply-delay" onclick="step()">Apply Effect</button>
+        <button id="reset" onclick="reset()">Reset</button>
+        <button id="start-stop" onclick="playing ? stopSound() : playSound()">Start</button>
+    </div>
+    <svg></svg>
+</body>
+<script>
+    var width = Math.max(940, innerWidth-20),
+        height = 470,
+        focusHeight = 200,
+        contextHeight = 50,
+        sampRateAdj,
+        origBuffer;
+
+    var delayVals = [401, 1201, 3101, 5001]
+
+    var audioCtx = new (window.AudioContext || window.webkitAudioContext)(),
+        beatData, source, playing;
+
+    var svg = d3.select("svg")
+        .attr("width", width)
+        .attr("height", height)
+
+    var x1 = d3.scaleLinear().range([0, width]),
+        x2 = d3.scaleLinear().range([0, width]),
+        y1 = d3.scaleLinear().range([focusHeight, 0]),
+        y2 = d3.scaleLinear().range([contextHeight, 0]);
+
+    var brush = d3.brushX()
+        .extent([[0, 0], [width, contextHeight]])
+        .on("brush end", brushed);
+
+    var zoom = d3.zoom()
+        .scaleExtent([1, Infinity])
+        .translateExtent([[0, 0], [width, focusHeight]])
+        .extent([[0, 0], [width, focusHeight]])
+        .on("zoom", zoomed);
+
+    var wave1 = d3.line()
+        .curve(d3.curveMonotoneX)
+        .x(function(d, i) {return x1(i)})
+        .y(function(d) {return y1(d)})
+
+    var wave2 = d3.line()
+        .curve(d3.curveMonotoneX)
+        .x(function(d, i) {return x2(i)})
+        .y(function(d) {return y2(d)})
+
+    var focus = svg.append("g")
+        .attr("id", "focus")
+
+    var context = svg.append("g")
+        .attr("id", "context")
+        .attr("transform", "translate(0," + (focusHeight + 30) + ")");
+
+    context.append("text")
+        .text("Original wave:")
+        .attr("transform", "translate(0,20)");
+
+    var waveShape1 = focus.append("path")
+        .datum([])
+        .attr("d", wave1)
+        .attr("transform", "translate(0,30)");
+
+    var waveShape2 = context.append("path")
+        .attr("transform", "translate(0,30)");
+
+    var position = context.append("rect")
+        .attr("class", "position")
+        .attr("y", 30)
+        .attr("width", 10)
+        .attr("height", contextHeight)
+        
+    var brushRect = context.append("g")
+        .attr("class", "brush")
+        .attr("transform", "translate(0,30)")
+        .call(brush)
+                .call(brush.move, x1.range());
+
+    var zoomRect = svg.append("rect")
+        .attr("class", "zoom")
+        .attr("width", width)
+        .attr("height", focusHeight)
+        .attr("transform", "translate(0,30)")
+        .call(zoom)
+
+    importAudio("//raw.githubusercontent.com/alexmacy/Audio-clips/master/sitting.wav")
+
+    function brushed() {
+        if (d3.event.sourceEvent && d3.event.sourceEvent.type === "zoom") return;
+        var s = d3.event.selection || x2.range();
+        x1.domain(s.map(x2.invert, x2));
+
+        waveShape1.attr("d", wave1);
+
+        svg.select(".zoom").call(zoom.transform, d3.zoomIdentity
+            .scale(width / (s[1] - s[0]))
+            .translate(-s[0], 0));
+    }
+
+    function zoomed() {
+        if (d3.event.sourceEvent && d3.event.sourceEvent.type === "brush") return;
+        var t = d3.event.transform;
+        x1.domain(t.rescaleX(x2).domain());
+
+        waveShape1.attr("d", wave1);
+        
+        context.select(".brush").call(brush.move, x1.range().map(t.invertX, t));
+    }
+
+    function importAudio(url) {
+        var request = new XMLHttpRequest();
+        request.open('GET', url, true);
+        request.responseType = 'arraybuffer';
+        request.onload = function() {
+                audioCtx.decodeAudioData(request.response, function(buffer) {
+                        loadAudio(buffer);
+                    },
+                    function(){alert("Error decoding audio data")}
+                );
+            }
+        request.send();
+
+        function loadAudio(buffer) {
+            beatData = buffer;
+            origBuffer = new Float32Array(beatData.length)
+            beatData.copyFromChannel(origBuffer, 0)
+
+            sampRateAdj = Math.floor(beatData.length/(width*2));
+            var waveData = drawWithAvgs(0)
+
+            x1.domain([0, waveData.length]);
+            y1.domain(d3.extent(beatData.getChannelData(0)));
+            x2.domain(x1.domain());
+            y2.domain(y1.domain());
+
+            waveShape1.datum(waveData).attr("d", wave1)
+            waveShape2.datum(waveData).attr("d", wave2)
+        }
+    }
+
+    function playSound() {
+        d3.select("#start-stop").text("stop")
+        playing = true;
+        
+        source = audioCtx.createBufferSource();
+        source.buffer = beatData;
+        source.connect(audioCtx.destination);
+        source.start();
+
+        position.style("visibility", "visible")
+            .transition().duration(0)
+                .attr("x", 0)
+            .transition().duration(beatData.duration*1000).ease(d3.easeLinear)
+                .attr("x", width)
+                .on("end", function() {
+                    if (playing) {
+                        playSound();
+                        step();
+                    }
+                })
+    }
+
+    function step() {        
+        for (n in delayVals) {
+            for (i=delayVals[n]; i<beatData.length; i++) {
+                beatData.getChannelData(0)[i] += beatData.getChannelData(0)[i-delayVals[n]]/10;
+            }
+        }
+
+        for (i=0; i<10000; i++) {
+            beatData.getChannelData(0)[beatData.length-10000+i] *= d3.easeExpOut((10000-i)/10000)
+        }
+
+        y1.domain(d3.extent(beatData.getChannelData(0)));
+        waveShape1.datum(drawWithAvgs(0)).attr("d", wave1)
+    }
+
+   function drawWithAvgs(channel) {
+        var Avgs = []
+        for (i=0; i<beatData.length - sampRateAdj; i += sampRateAdj) {
+            Avgs.push(d3.mean(beatData.getChannelData(channel).slice(i, i+sampRateAdj)))
+        }
+        return Avgs
+    }
+
+    function stopSound() {
+        d3.select("#start-stop").text("start")
+        position.interrupt().style("visibility", "hidden")
+        playing = false;
+        if (source) {source.stop();}
+    }
+
+    function reset() {
+        beatData.copyToChannel(origBuffer, 0)
+        y1.domain(d3.extent(beatData.getChannelData(0)));
+        waveShape1.datum(drawWithAvgs(0)).attr("d", wave1)
+    }
+</script>

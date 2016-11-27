@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        button {margin-right: 10px}
+        input {margin-left: 10px}
+        path {fill: none; stroke: black; stroke-width: .5;}
+        line {stroke: red; stroke-width: 2; visibility: hidden;}
+        .position {fill: red; fill-opacity: .5; visibility: hidden;}
+        .zoom {fill: none; pointer-events: all;}
+    </style>
+    <script src="//d3js.org/d3.v4.min.js"></script>
+</head>
+<body style="margin: 10px">
+    <div>
+        <select id="file-select"></select>
+        <button id="loadRepo" onclick="loadFromSelect()">Load From Select</button>
+        or
+        <input type="file" id="load-file" onchange="loadLocalFile()" style="margin-right: 100px;"/>
+        <button onclick="clearCues()">Clear Cues</button>
+        <button id="start-stop" onclick="playing ? stopSound() : playSound()">Start</button>        
+        <input type="checkbox" onclick="looping = !looping" checked/> Loop
+    </div>
+    <div style="margin-top: 10px;">
+        Fade: 
+        <select id="fade-direction">
+            <option value="in">In</option>
+            <option value="out">Out</option>
+        </select>
+        <select id="ease-select">
+            <option value="easeLinear">easeLinear</option> 
+            <option value="easePolyIn">easePolyIn</option>
+            <option value="easePolyOut">easePolyOut</option>
+            <option value="easePolyInOut">easePolyInOut</option>
+            <option value="easeQuadIn">easeQuadIn</option>
+            <option value="easeQuadOut">easeQuadOut</option>
+            <option value="easeQuadInOut">easeQuadInOut</option>
+            <option value="easeCubicIn">easeCubicIn</option>
+            <option value="easeCubicOut">easeCubicOut</option>
+            <option value="easeCubicInOut">easeCubicInOut</option>
+            <option value="easeSinIn">easeSinIn</option>
+            <option value="easeSinOut">easeSinOut</option>
+            <option value="easeSinInOut">easeSinInOut</option>
+            <option value="easeExpIn">easeExpIn</option>
+            <option value="easeExpOut">easeExpOut</option>
+            <option value="easeExpInOut">easeExpInOut</option>
+            <option value="easeCircleIn">easeCircleIn</option>
+            <option value="easeCircleOut">easeCircleOut</option>
+            <option value="easeCircleInOut">easeCircleInOut</option>
+            <option value="easeElasticIn">easeElasticIn</option>
+            <option value="easeElasticOut">easeElasticOut</option>
+            <option value="easeElasticInOut">easeElasticInOut</option>
+            <option value="easeBackIn">easeBackIn</option>
+            <option value="easeBackOut">easeBackOut</option>
+            <option value="easeBackInOut">easeBackInOut</option>
+            <option value="easeBounceIn">easeBounceIn</option>
+            <option value="easeBounceOut">easeBounceOut</option>
+            <option value="easeBounceInOut">easeBounceInOut</option>
+        </select>
+        <button id="apply-ease" onclick="fade()" style="margin-right: 50px;">Apply Fade</button>
+        Delay:
+        <select id="delay-Value"></select>
+        <button id="apply-delay" onclick="delay()" style="margin-right: 50px;">Apply Delay</button>
+        <button id="reset" onclick="reset()">Reset</button>
+    </div>
+    <svg></svg>
+</body>
+<script>
+    var width = Math.max(940, innerWidth-20),
+        height = 450,
+        waveHeight = 200,
+        sampRateAdj,
+        origBuffer;
+
+    var audioCtx = new (window.AudioContext || window.webkitAudioContext)(),
+        beatData, source, playing, looping = true;
+
+    var svg = d3.select("svg")
+        .attr("width", width)
+        .attr("height", height)
+
+    var timeScale = d3.scaleLinear().range([0, width]),
+        x1 = d3.scaleLinear().range([0, width]),
+        x2 = d3.scaleLinear().range([0, width]),
+        y1 = d3.scaleLinear().range([waveHeight, 0]),
+        y2 = d3.scaleLinear().range([waveHeight/4, 0]);
+
+    var brush = d3.brushX()
+        .extent([[0, 0], [width, waveHeight/4]])
+        .on("brush end", brushed);
+
+    var zoom = d3.zoom()
+        .scaleExtent([1, Infinity])
+        .translateExtent([[0, 0], [width, waveHeight]])
+        .extent([[0, 0], [width, waveHeight]])
+        .on("zoom", zoomed);
+
+    var wave1 = d3.line()
+        .curve(d3.curveMonotoneX)
+        .x(function(d, i) {return x1(i)})
+        .y(function(d) {return y1(d)})
+
+    var wave2 = d3.line()
+        .curve(d3.curveMonotoneX)
+        .x(function(d, i) {return x2(i)})
+        .y(function(d) {return y2(d)})
+
+    var focus = svg.append("g")
+        .attr("id", "focus")
+
+    var context = svg.append("g")
+        .attr("id", "context")
+        .attr("transform", "translate(0," + (waveHeight + 30) + ")");
+
+    context.append("text")
+        .text("Original wave:")
+        .attr("transform", "translate(0,20)");
+
+    var waveShape1 = focus.append("path")
+        .datum([])
+        .attr("d", wave1)
+        .attr("transform", "translate(0,30)");
+
+    var waveShape2 = context.append("path")
+        .attr("transform", "translate(0,30)");
+
+    var cues = focus.append("g"),
+        cues2 = context.append("g");
+
+    var position = context.append("rect")
+        .attr("class", "position")
+        .attr("y", 30)
+        .attr("width", 10)
+        .attr("height", waveHeight/4)
+
+    var brushRect = context.append("g")
+        .attr("class", "brush")
+        .attr("transform", "translate(0,30)")
+        .call(brush)
+        .call(brush.move, x1.range());;
+
+    var zoomRect = svg.append("rect")
+        .attr("class", "zoom")
+        .attr("width", width)
+        .attr("height", waveHeight)
+        .attr("transform", "translate(0,30)")
+        .call(zoom)
+        .on("mousedown.zoom touchstart.zoom touchmove.zoom touchend.zoom", null)
+        .on("click", function() {
+            var t = x1.invert(d3.event.offsetX)
+            d3.event.shiftKey ? addCue(t) : playSound(timeScale.invert(x2(t)))
+        })
+
+    d3.select(document).on("keydown", keyEvent)
+
+    d3.json("https://api.github.com/repos/alexmacy/loops/contents/", function(error, loopList) {
+        d3.select("#file-select").selectAll("option")
+            .data(loopList)
+          .enter().append("option")
+            .attr("value", function(d) {return d.download_url})
+            .property("selected", function(d) {return (d.name == "back_on_the_streets_again.wav")})
+            .text(function(d) {return d.name})
+
+        loadFromSelect();
+    })
+
+    function importAudio(url) {
+        stopSound();
+        var request = new XMLHttpRequest();
+        request.open('GET', url, true);
+        request.responseType = 'arraybuffer';
+        request.onload = function() {
+                audioCtx.decodeAudioData(request.response, function(buffer) {
+                        loadAudio(buffer);
+                    },
+                    function(){alert("Error decoding audio data")}
+                );
+            }
+        request.send();
+
+        function loadAudio(buffer) {
+            beatData = buffer;
+            origBuffer = new Float32Array(beatData.length)
+            beatData.copyFromChannel(origBuffer, 0)
+
+            var delayVals = [
+                {key: "1/2 sample length", value: -Math.floor(beatData.length/2)},
+                {key: "1/3 sample length", value: -Math.floor(beatData.length/3)},
+                {key: "1/4 sample length", value: -Math.floor(beatData.length/4)},
+                {key: "1/6 sample length", value: -Math.floor(beatData.length/6)},
+                {key: "1/8 sample length", value: -Math.floor(beatData.length/8)},
+                {key: "1/12 sample length", value: -Math.floor(beatData.length/12)},
+                {key: "1/16 sample length", value: -Math.floor(beatData.length/16)},
+                {key: "1/24 sample length", value: -Math.floor(beatData.length/24)},
+                {key: "1/32 sample length", value: -Math.floor(beatData.length/32)},
+                {key: "-1/2 sample length", value: Math.floor(beatData.length/2)},
+                {key: "-1/3 sample length", value: Math.floor(beatData.length/3)},
+                {key: "-1/4 sample length", value: Math.floor(beatData.length/4)},
+                {key: "-1/6 sample length", value: Math.floor(beatData.length/6)},
+                {key: "-1/8 sample length", value: Math.floor(beatData.length/8)},
+                {key: "-1/12 sample length", value: Math.floor(beatData.length/12)},
+                {key: "-1/16 sample length", value: Math.floor(beatData.length/16)},
+                {key: "-1/24 sample length", value: Math.floor(beatData.length/24)},
+                {key: "-1/32 sample length", value: Math.floor(beatData.length/32)},
+            ]
+
+            d3.select("#delay-Value").html("").selectAll("option")
+                .data(delayVals)
+              .enter().append("option")
+                .attr("value", function(d) {return d.value})
+                .text(function(d) {return d.key})
+
+            sampRateAdj = Math.floor(beatData.length/(width*10));
+            var waveData = drawWithAvgs(0)
+
+            timeScale.domain([0, beatData.duration]);
+            x1.domain([0, waveData.length]);
+            y1.domain(d3.extent(waveData));
+            x2.domain(x1.domain());
+            y2.domain(y1.domain());
+
+            waveShape1.datum(waveData).attr("d", wave1)
+            waveShape2.datum(waveData).attr("d", wave2)
+
+            cues.html("")
+            cues2.html("")
+            for (i=0; i<8; i++) {
+                addCue(i * (waveData.length/8))
+            }
+        }
+    }
+
+    function playSound(t=0) {
+        if (source) {source.stop();}
+
+        d3.select("#start-stop").text("stop")
+        playing = true;
+        
+        source = audioCtx.createBufferSource();
+        source.buffer = beatData;
+        source.connect(audioCtx.destination);
+        source.start(0, t);
+
+        position.style("visibility", "visible")
+            .transition().duration(0)
+                .attr("x", timeScale(t))
+            .transition().duration((beatData.duration - t) * 1000).ease(d3.easeLinear)
+                .attr("x", width)
+                .on("end", function() {
+                    playing && looping ? playSound() : stopSound();
+                })
+    }
+
+    function addCue(t) {
+        var cueNum = cues.selectAll("text").nodes().length
+        if (cueNum > 8) return alert("Reached maximum number of cues")
+
+        cues.append("path")
+            .attr("class", "cue")
+            .datum(t)
+            .attr("d", function(d) {return "M" + x1(d) + ",30V" + (waveHeight+30)})
+
+        cues.append("text")
+            .datum(t)
+            .attr("x", function(d) {return x1(d)})
+            .attr("y", 20)
+            .text(cueNum + 1)
+
+        cues2.append("path")
+            .attr("class", "cue")
+            .datum(t)
+            .attr("d", function(d) {return "M" + x2(d) + ",30V" + (waveHeight/4+30)})
+
+        cues2.append("text")
+            .datum(t)
+            .attr("id", "text" + (cueNum + 1))
+            .attr("x", function(d) {return x2(d)})
+            .attr("y", 20)
+            .text(cueNum + 1)
+    }
+
+    function keyEvent() {
+        var thisKey = d3.event.keyCode-48;
+        if (thisKey == -16) playing ? stopSound() : playSound(0);
+        if (!d3.select("#text" + thisKey).empty()) { 
+            playSound(timeScale.invert(+d3.select("#text" + thisKey).attr("x")))
+        }
+    }
+
+    function brushed() {
+        if (d3.event.sourceEvent && d3.event.sourceEvent.type === "zoom") return;
+        var s = d3.event.selection || x2.range();
+
+        x1.domain(s.map(x2.invert, x2));
+        brushZoomUpdate()
+
+        svg.select(".zoom").call(zoom.transform, d3.zoomIdentity
+            .scale(width / (s[1] - s[0]))
+            .translate(-s[0], 0));
+    }
+
+    function zoomed() {
+        if (d3.event.sourceEvent && d3.event.sourceEvent.type === "brush") return;
+        var t = d3.event.transform;
+
+        x1.domain(t.rescaleX(x2).domain());
+        brushZoomUpdate()
+        
+        context.select(".brush").call(brush.move, x1.range().map(t.invertX, t));
+    }
+
+    function brushZoomUpdate() {
+        waveShape1.attr("d", wave1);
+
+        cues.selectAll("path")
+            .attr("d", function(d) {return "M" + x1(d) + ",30V" + (waveHeight + 30)})
+
+        cues.selectAll("text")
+            .attr("x", function(d) {return x1(d)})
+    }
+
+    function fade(c=0) {
+        var direction = d3.select("#fade-direction").property("value");
+        var easeMethod = d3.select("#ease-select").property("value")
+
+        if (direction == "in") {
+            for (i in beatData.getChannelData(c)) {
+                beatData.getChannelData(c)[i] *= d3[easeMethod](i/beatData.length)
+            }            
+        } else {
+            for (i in beatData.getChannelData(c)) {
+                beatData.getChannelData(c)[beatData.length - i] *= d3[easeMethod](i/beatData.length)
+            }                        
+        }
+        
+        waveShape1.datum(drawWithAvgs(0)).transition().duration(500).attr("d", wave1)
+
+        if (beatData.numberOfChannels > 1 && c == 0) fade(1);
+    }
+
+    function delay(c=0) {
+        var delayValue = +d3.select("#delay-Value").property("value")
+        var tempBuffer = [...beatData.getChannelData(c)]
+
+        for (i=0; i<beatData.length; i++) {
+            if (tempBuffer[i+delayValue]) {
+                beatData.getChannelData(c)[i] = (beatData.getChannelData(c)[i] + tempBuffer[i+delayValue])/2
+            }
+        }
+
+        y1.domain(d3.extent(beatData.getChannelData(0)));
+        waveShape1.datum(drawWithAvgs(0)).transition().duration(500).attr("d", wave1)
+
+        if (beatData.numberOfChannels > 1 && c == 0) delay(1);
+    }
+    
+    function loadFromSelect() {
+        importAudio(d3.select("#file-select").property("selectedOptions")[0].value)
+    }
+
+    function loadLocalFile() {
+        var reader = new FileReader();
+        reader.onload = function(e) {importAudio(e.target.result);};
+        reader.readAsDataURL(d3.select("#load-file").property("files")[0]);
+    }
+
+    function drawWithAvgs(channel) {
+        var Avgs = []
+        for (i=0; i<beatData.length - sampRateAdj; i += sampRateAdj) {
+            Avgs.push(d3.mean(beatData.getChannelData(channel).slice(i, i+sampRateAdj)))
+        }
+        return Avgs
+    }
+
+    function stopSound() {
+        d3.select("#start-stop").text("start")
+        position.interrupt().style("visibility", "hidden")
+        playing = false;
+        if (source) {source.stop();}
+    }
+
+    function reset() {
+        beatData.copyToChannel(origBuffer, 0)
+        y1.domain(d3.extent(beatData.getChannelData(0)));
+        waveShape1.datum(drawWithAvgs(0)).transition().duration(500).attr("d", wave1)
+    }
+
+    function clearCues() {
+        cues.html("")
+        cues2.html("")
+        addCue(0);
+    }
+</script>

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        button {margin-right: 10px;}
+        path {fill: none; stroke: black; stroke-width: .5;}
+        rect {fill: red; fill-opacity: .5; visibility: hidden;}
+    </style>
+    <script src="//d3js.org/d3.v4.min.js"></script>
+</head>
+<body style="margin: 10px">
+    <div>
+        <select id="file-select">
+            <option value="https://raw.githubusercontent.com/alexmacy/Audio-clips/master/come%20out.wav">Come out</option>
+            <option value="https://raw.githubusercontent.com/alexmacy/Audio-clips/master/come%20out.wav">It's Gonna Rain</option>
+        </select>
+        <button id="load-file" onclick="loadFromSelect()" style="margin-right: 50px">Load File</button>
+
+        Phase offset: 
+        <select id="offset-select">
+            <option value=".001">1 millisecond</option>
+            <option value=".005">5 milliseconds</option>
+            <option value=".01">10 milliseconds</option>
+            <option value=".05">50 milliseconds</option>
+            <option value=".1">100 milliseconds</option>
+        </select>
+        <button id="step" onclick="phase()">One Step</button>
+        <button id="reset" onclick="reset()">Reset</button>
+        <button id="start-stop" onclick="playing ? stopSound() : playSound()">Start</button>
+    </div>
+    <svg></svg>
+</body>
+<script>
+    var width = Math.max(940, innerWidth-20),
+        height = 470,
+        waveHeight = 200;
+
+    var audioCtx = new (window.AudioContext || window.webkitAudioContext)(),
+        beatData, sampRateAdj, source, playing;
+
+    var offset = 0;
+
+    var svg = d3.select("svg")
+        .attr("width", width)
+        .attr("height", height)
+
+    var x = d3.scaleLinear().range([0, width]),
+        y = d3.scaleLinear().range([waveHeight, 0]);
+
+    var wave = d3.line()
+        .curve(d3.curveMonotoneX)
+        .x(function(d, i) {return x(i)})
+        .y(function(d) {return y(d)})
+
+    var waveShape1 = svg.append("g")
+        .append("path")
+            .datum([])
+            .attr("d", wave)
+            .attr("transform", "translate(0,30)");
+
+    var waveShape2 = svg.append("g")
+        .attr("transform", "translate(0," + (waveHeight + 30) + ")")
+        .append("path")
+            .datum([])
+            .attr("d", wave)
+            .attr("transform", "translate(0,30)");
+
+    var position = svg.append("rect")
+        .attr("y", 20)
+        .attr("width", 20)
+        .attr("height", height-20)
+
+    loadFromSelect()
+
+    function importAudio(url) {
+        stopSound();
+        var request = new XMLHttpRequest();
+        request.open('GET', url, true);
+        request.responseType = 'arraybuffer';
+        request.onload = function() {
+                audioCtx.decodeAudioData(request.response, function(buffer) {
+                        loadAudio(buffer);
+                    },
+                    function(){alert("Error decoding audio data")}
+                );
+            }
+        request.send();
+
+        function loadAudio(buffer) {
+            beatData = buffer;
+            sampRateAdj = Math.floor(beatData.length/(width*10));
+
+            var waveData = drawWithAvgs(0)
+
+            x.domain([0, waveData.length]);
+            y.domain(d3.extent(beatData.getChannelData(0)));
+            
+            waveShape1.datum(waveData).attr("d", wave)
+            waveShape2.datum(waveData).attr("d", wave)
+
+        }
+    }
+
+    function playSound() {
+        d3.select("#start-stop").text("stop")
+        playing = true;
+        
+        source = audioCtx.createBufferSource();
+        source.buffer = beatData;
+        source.connect(audioCtx.destination);
+        source.start();
+
+        position.style("visibility", "visible")
+            .transition().duration(0)
+                .attr("x", 0)
+            .transition().duration(beatData.duration * 1000).ease(d3.easeLinear)
+                .attr("x", width)
+                .on("end", function() {
+                    if (playing) playSound()
+                    phase()
+                })
+    }
+
+    function phase() {
+        offset += Math.floor(+d3.select("#offset-select").property("value") * beatData.length);
+
+        for (i=0; i<beatData.length; i++) {
+            beatData.getChannelData(1)[i] = beatData.getChannelData(0)[(i+offset) % beatData.length]
+        }
+
+        waveShape2.datum(drawWithAvgs(1)).attr("d", wave)
+    }
+
+   function drawWithAvgs(channel) {
+        var Avgs = []
+        for (i=0; i<beatData.length - sampRateAdj; i += sampRateAdj) {
+            Avgs.push(d3.mean(beatData.getChannelData(channel).slice(i, i+sampRateAdj)))
+        }
+        return Avgs
+    }
+
+    function loadFromSelect() {
+        importAudio(d3.select("#file-select").property("value"))
+    }
+
+    function stopSound() {
+        d3.select("#start-stop").text("start")
+        position.interrupt().style("visibility", "hidden")
+        playing = false;
+        if (source) {source.stop();}
+    }
+
+    function reset() {
+        offset = 0;
+        beatData.copyFromChannel(beatData.getChannelData(1), 0)
+        waveShape2.datum(drawWithAvgs(0)).attr("d", wave)
+    }
+</script>
