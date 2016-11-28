@@ -180,8 +180,7 @@
 
         function loadAudio(buffer) {
             beatData = buffer;
-            origBuffer = new Float32Array(beatData.length)
-            beatData.copyFromChannel(origBuffer, 0)
+            origBuffer = [...beatData.getChannelData(0)]
 
             var delayVals = [
                 {key: "1/2 sample length", value: -Math.floor(beatData.length/2)},
@@ -380,7 +379,9 @@
     }
 
     function reset() {
-        beatData.copyToChannel(origBuffer, 0)
+        for (i in beatData.getChannelData(0)) {
+            beatData.getChannelData(0)[i] = origBuffer[i]
+        }
         y1.domain(d3.extent(beatData.getChannelData(0)));
         waveShape1.datum(drawWithAvgs(0)).transition().duration(500).attr("d", wave1)
     }
