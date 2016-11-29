@@ -2,8 +2,10 @@
 <html>
 <head>
     <style>
-        path {fill: none; stroke: black; stroke-width: 1;}
-        rect {fill: none; stroke: steelblue; pointer-events: all;}
+        body {margin: 0px; overflow:hidden;}
+      	svg {margin: 10px;}
+      	path {fill: none; stroke: black; stroke-width: 1;}
+        rect {fill: none; stroke: steelblue;}
     </style>
     <script src="//d3js.org/d3.v4.min.js"></script>
 </head>
@@ -72,8 +74,12 @@
     svg.append("rect")
         .attr("width", width)
         .attr("height", height)
+
+    svg.on("touchstart", playSound)
         .on("mousemove", update)
+        .on("touchmove", update)
         .on("mouseout", stopSound)
+        .on("touchend", stopSound)
     
     svg.append("line")
         .style("stroke", "steelblue")
@@ -81,12 +87,14 @@
         .attr("y1", height/2)      
         .attr("x2", width)      
         .attr("y2", height/2)      
+
+    document.addEventListener("touchmove", function(e) {e.preventDefault();}, false);    
     
     loadAudio()
 
     function update() {
-        var xTone = toneScaleX(d3.event.pageX),
-            yTone = toneScaleY(d3.event.pageY);
+        var xTone = toneScaleX(d3.event.pageX ? d3.event.pageX : d3.event.touches[0].pageX),
+            yTone = toneScaleY(d3.event.pageY ? d3.event.pageY : d3.event.touches[0].pageY);
 
         var elasticVal = yTone * (1-xTone),
             sineVal = yTone * xTone,
@@ -121,6 +129,7 @@
     }
 
     function playSound() {   
+        if (playing) stopSound();
         playing = true;     
         source = audioCtx.createBufferSource();
         source.buffer = buffer;
