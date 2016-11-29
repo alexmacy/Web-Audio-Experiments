@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        path {fill: none; stroke: black; stroke-width: 1;}
+        rect {fill: none; stroke: steelblue; pointer-events: all;}
+    </style>
+    <script src="//d3js.org/d3.v4.min.js"></script>
+</head>
+<body>
+    <svg></svg>
+</body>
+<script>
+    var width = Math.max(940, innerWidth-20),
+        height = Math.max(460, innerHeight-20);
+
+    var source;
+    var playing = false;
+
+    var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    var sampleRate = 44100,
+        frequency = 220,
+        waveCycles = 4,
+        samples = sampleRate/frequency;
+
+    var buffer = audioCtx.createBuffer(1, samples * waveCycles, sampleRate);
+    
+    var svg = d3.select("svg")
+        .attr("width", width)
+        .attr("height", height)
+
+    var x = d3.scaleLinear().range([0, width]).domain([samples * .25, buffer.length - (samples * .75)]),
+        y = d3.scaleLinear().range([height-50, 50]).domain([-1,1]),
+        toneScaleX = d3.scaleLinear().range([0,1]).domain([50,width-50]).clamp(true),
+        toneScaleY = d3.scaleLinear().range([0,1]).domain([height-50,50]).clamp(true);
+
+    var wave = d3.line()
+        .curve(d3.curveMonotoneX)
+        .x(function(d, i) {return x(i)})
+        .y(function(d) {return y(d)})
+
+    var waveShape = svg.append("g").append("path")
+        .datum([])
+        .attr("d", wave)
+        .attr("transform", "translate(0,0)");
+
+    var elasticLabel = svg.append("text")
+        .attr("x", 15)
+        .attr("y", 20)
+        .attr("text-anchor", "start")
+        .text("Elastic: 25%" )
+
+    var sineLabel = svg.append("text")
+        .attr("x", width - 15)
+        .attr("y", 20)
+        .attr("text-anchor", "end")
+        .text("Sine: 25%")
+
+    var squareLabel = svg.append("text")
+        .attr("x", 15)
+        .attr("y", height - 20)
+        .attr("text-anchor", "start")
+        .text("Square: 25%")
+
+    var triangleLabel = svg.append("text")
+        .attr("x", width - 15)
+        .attr("y", height - 20)
+        .attr("text-anchor", "end")
+        .text("Triangle: 25%")
+
+    svg.append("rect")
+        .attr("width", width)
+        .attr("height", height)
+        .on("mousemove", update)
+        .on("mouseout", stopSound)
+    
+    svg.append("line")
+        .style("stroke", "steelblue")
+        .attr("stroke-dasharray",[5,5])
+        .attr("y1", height/2)      
+        .attr("x2", width)      
+        .attr("y2", height/2)      
+    
+    loadAudio()
+
+    function update() {
+        var xTone = toneScaleX(d3.event.pageX),
+            yTone = toneScaleY(d3.event.pageY);
+
+        var elasticVal = yTone * (1-xTone),
+            sineVal = yTone * xTone,
+            squareVal = (1-yTone) * (1-xTone),
+            triangleVal = (1-yTone) * xTone;
+
+        loadAudio(xTone, yTone)
+
+        elasticLabel.text("Elastic: " + d3.format(",.2%")(elasticVal))
+        sineLabel.text("Sine: " + d3.format(",.2%")(sineVal))
+        squareLabel.text("Square: " + d3.format(",.2%")(squareVal))
+        triangleLabel.text("Triangle: " + d3.format(",.2%")(triangleVal))
+    }
+
+    function loadAudio(xTone = .5, yTone = .5) {
+        for (i=0; i<buffer.length; i++) {
+            var thisVal = (Math.abs(((i+samples/4) % samples)/(samples/2)-1))
+            
+            
+            var eased = (((d3.easeSinInOut(thisVal) - .5) * yTone) + 
+                        ((d3.easeLinear(thisVal) - .5) * (1 - yTone))) * xTone + 
+                        
+                        (((d3.easeElasticIn(thisVal) - .5) * (yTone)) +
+                        ((Math.round(thisVal) - .5) * (1 - yTone))) * (1-xTone)
+            
+            buffer.getChannelData(0)[i] = eased;
+        }
+
+        waveShape.datum(buffer.getChannelData(0)).attr("d", wave)   
+
+        if (playing == false) playSound();
+    }
+
+    function playSound() {   
+        playing = true;     
+        source = audioCtx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioCtx.destination);
+        source.loop = true;
+        source.start();
+    }
+
+    function stopSound() {
+        playing = false;
+        if (source) {source.stop();}
+    }
+</script>
