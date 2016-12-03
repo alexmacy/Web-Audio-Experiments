@@ -15,6 +15,7 @@
         <button id="apply-delay" onclick="step()">Apply Effect</button>
         <button id="reset" onclick="reset()">Reset</button>
         <button id="start-stop" onclick="playing ? stopSound() : playSound()">Start</button>
+        <input type="checkbox" onclick="stepping = !stepping" checked/>Step when Looping
     </div>
     <svg></svg>
 </body>
@@ -29,7 +30,7 @@
     var delayVals = [401, 1201, 3101, 5001]
 
     var audioCtx = new (window.AudioContext || window.webkitAudioContext)(),
-        beatData, source, playing;
+        beatData, source, playing, stepping = true;
 
     var svg = d3.select("svg")
         .attr("width", width)
@@ -39,6 +40,8 @@
         x2 = d3.scaleLinear().range([0, width]),
         y1 = d3.scaleLinear().range([focusHeight, 0]),
         y2 = d3.scaleLinear().range([contextHeight, 0]);
+
+    var normalizeScale = d3.scaleLinear().range([-1,1]);
 
     var brush = d3.brushX()
         .extent([[0, 0], [width, contextHeight]])
@@ -98,7 +101,7 @@
         .attr("transform", "translate(0,30)")
         .call(zoom)
 
-    importAudio("https://raw.githubusercontent.com/alexmacy/Audio-clips/master/sitting.wav")
+    importAudio("//raw.githubusercontent.com/alexmacy/Audio-clips/master/sitting.wav")
 
     function brushed() {
         if (d3.event.sourceEvent && d3.event.sourceEvent.type === "zoom") return;
@@ -137,7 +140,10 @@
 
         function loadAudio(buffer) {
             beatData = buffer;
+            origBuffer = new Float32Array(beatData.length)
             origBuffer = [...beatData.getChannelData(0)]
+
+            normalize();
 
             sampRateAdj = Math.floor(beatData.length/(width*2));
             var waveData = drawWithAvgs(0)
@@ -169,24 +175,33 @@
                 .on("end", function() {
                     if (playing) {
                         playSound();
-                        step();
+                        if (stepping) step();
                     }
                 })
     }
 
     function step() {        
+        var tempBuffer = new Float32Array;
+        tempBuffer = [...beatData.getChannelData(0)]    
+
         for (n in delayVals) {
-            for (i=delayVals[n]; i<beatData.length; i++) {
-                beatData.getChannelData(0)[i] += beatData.getChannelData(0)[i-delayVals[n]]/10;
+            for (i=0; i<beatData.length; i++) {
+                beatData.getChannelData(0)[i] += tempBuffer[(i - delayVals[n] + beatData.length) % beatData.length]/10;
             }
         }
 
-        for (i=0; i<10000; i++) {
-            beatData.getChannelData(0)[beatData.length-10000+i] *= d3.easeExpOut((10000-i)/10000)
-        }
+        normalize();
 
         y1.domain(d3.extent(beatData.getChannelData(0)));
         waveShape1.datum(drawWithAvgs(0)).attr("d", wave1)
+    }
+
+    function normalize() {
+        normalizeScale.domain(d3.extent(beatData.getChannelData(0)));
+
+        for (i=0; i<beatData.length; i++) {
+            beatData.getChannelData(0)[i] = normalizeScale(beatData.getChannelData(0)[i])
+        }
     }
 
    function drawWithAvgs(channel) {
