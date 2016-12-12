@@ -1,0 +1,14 @@
+body {
+	margin: 10;
+	padding: 0;
+	font-family: sans-serif;
+}
+
+.Wave {
+	fill: none;	
+	stroke: black;	
+}
+
+input, select, button {
+	margin-left: 10px;
+}
